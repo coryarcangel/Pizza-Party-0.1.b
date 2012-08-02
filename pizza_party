@@ -1,0 +1,946 @@
+#!/usr/bin/perl
+
+# todo
+#
+# batch files (same as command)
+
+
+use strict;
+use LWP::UserAgent;
+use HTTP::Request;
+use HTTP::Response;
+use HTTP::Cookies;
+use URI::Escape;
+use Getopt::Mixed;
+
+use constant FRONT_PAGE_URL => 'http://www.dominos.quikorder.com/scripts/mgwms32.dll?MGWLPN=MWEBLINK&wlapp=QUIKORDER&guid=';
+use constant LOGIN_URL => 'http://www.dominos.quikorder.com/scripts/mgwms32.dll';
+use constant ORDER_URL => 'http://www.dominos.quikorder.com/scripts/mgwms32.dll';
+use constant CHECKOUT_URL => 'http://www.dominos.quikorder.com/scripts/mgwms32.dll';
+
+use constant PPRINT_FATAL => -1;
+use constant PPRINT_QUIET => 0;
+use constant PPRINT_OUTPUT => 1;
+use constant PPRINT_VERBOSE => 2;
+use constant PPRINT_DEBUG => 3;
+
+use constant MIN_QTY => 1;
+use constant MAX_QTY => 5;
+
+sub pprint;
+
+our $PPERROR = "";
+
+our $PPRINT_LEVEL = PPRINT_OUTPUT;
+#our $PPRINT_LEVEL = PPRINT_DEBUG;
+
+#dont fuck with the ordering of these toppings.  it is keyed to the web page
+our $TOPPINGS = [{ short => 'o', long => 'onions', type => '', default => '0', desc => 'with onions'},
+                { short => 'g', long => 'green-peppers', type => '', default => '0', desc => 'with green peppers'},
+		{ short => 'm', long => 'mushrooms', type => '', default => '0', desc => 'with mushrooms'},
+		{ short => 'v', long => 'olives', type => '', default => '0', desc => 'with olives'},
+		{ short => 't', long => 'tomatoes', type => '', default => '0', desc => 'with tomatoes'},
+		{ short => 'h', long => 'pineapple', type => '', default => '0', desc => 'with pineapple'},
+		{ short => 'x', long => 'extra-cheese', type => '', default => '0', desc => 'extra-cheese'},
+                { short => 'd', long => 'cheddar-cheese', type => '', default => '0', desc => 'with cheddar cheese'},
+		{ short => 'p', long => 'pepperoni', type => '', default => '0', desc => 'with pepperoni'},
+                { short => 's', long => 'sausage', type => '', default => '0', desc => 'with sausage'},
+		{ short => 'w', long => 'ham', type => '', default => '0', desc => 'with ham (sWine, Wilbur)'},
+		{ short => 'b', long => 'bacon', type => '', default => '0', desc => 'with bacon'},
+		{ short => 'e', long => 'ground-beef', type => '', default => '0', desc => 'with ground beef'},
+		{ short => 'c', long => 'grilled-chicken', type => '', default => '0', desc => 'with grilled chicken'},
+                { short => 'z', long => 'anchovies', type => '', default => '0', desc => 'with anchovieZZZZ'},
+                { short => 'u', long => 'extra-sauce', type => '', default => '0', desc => 'with extra sauce '},
+    ];
+
+### non-topping options
+our $OPTIONS = [
+		{ short => 'U', long => 'username', type => ':s', default => undef, desc => 'user name'},
+		{ short => 'P', long => 'password', type => ':s', default => undef, desc => 'password'},
+#MAYBE CAP I 
+                { short => 'I', long => 'input-file', type => '=s', default => '', desc => 'input file to read batch of pizza (see man page)'},
+		{ short => 'V', long => 'verbose', type => '', default => '', desc => 'verbose'},
+		{ short => 'Q', long => 'quiet', type => '', default => '', desc => 'quiet'},
+		{ short => 'F', long => 'force', type => '', default => '', desc => 'don\'t ask for confirmation before ordering'},
+		{ short => 'H', long => 'help', type => '', default => '', desc => 'show the command options/arguments for pizza_party'},
+		];
+
+#combine the toppings list into the commandline args
+foreach(@$TOPPINGS) {
+    push(@$OPTIONS, $_);
+}
+
+#get list of the long option names
+our (@TOPLIST) = map {$_->{long};} @$TOPPINGS;
+
+#possible sizes
+our $SIZES = {
+    s => { name => 'small', aliases => ['s', 'small']},
+    m => { name => 'medium', aliases => ['m', 'med', 'medium']},
+    l => { name => 'large', aliases => ['l', 'large']},
+};
+
+#possible crusts
+our $CRUSTS = {
+    t => { name => 'thin', aliases => ['t', 'thin']},
+    r => { name => 'regular', aliases => ['r', 'reg', 'regular']},
+    d => { name => 'deep', aliases => ['d', 'deep']},
+};
+
+#default default is 1 Large Regular [crust]
+our (@DEFAULTS) = qw(1 l r);
+
+my $rc_file = "$ENV{HOME}/.pizza_partyrc";
+my $rc = readRCFile($rc_file);
+
+$DEFAULTS[0] = $rc->{quantity} unless !defined($rc->{quantity});
+$DEFAULTS[1] = $rc->{size} unless !defined($rc->{size});
+$DEFAULTS[2] = $rc->{crust} unless !defined($rc->{crust});
+
+our $optHash = hashifyOptions($OPTIONS);
+markToppings($optHash, \@TOPLIST);
+
+my $args = getOrder(\@ARGV, \@DEFAULTS, $OPTIONS, \&asshole);
+if($args->{help}) {
+    printUsage();
+    print "\n";
+    printHelp();
+    pprint "\n", PPRINT_FATAL;
+}
+
+
+my (@orders);
+
+if(!$args->{I}) { 
+    my $order = \%{$args};
+    push(@orders, prepareOrder($order));
+}
+else {
+    push(@orders, parseBatchFile($args->{I}));
+}
+
+if(scalar(@orders) < 1) {
+    pprint "You have not specified any orders.\n\n", PPRINT_FATAL;
+}
+
+my ($user, $pass) = getAccountInfo($args, $rc);
+
+setOutputLevel($args);
+
+pprint "Order:\t" . join("\n\t", map { orderStr($_) } @orders) . "\n\n", PPRINT_OUTPUT;
+
+
+my $ua = LWP::UserAgent->new;
+$ua->agent("PizzaParty");
+
+my ($formData, $cookies) = getLoginPage($ua, LOGIN_URL);
+($formData, $cookies) = login($user, $pass, $formData, $cookies, $ua, ORDER_URL);
+#foreach order, do something
+my $price = 0;
+for(my $i = 0; $i < scalar(@orders); $i++) {
+    ($formData, $cookies, $price) = order($orders[$i], $i + 1, ($i < scalar(@orders) - 1 ? 0 : 1), $formData, $cookies, $ua, CHECKOUT_URL);
+}
+my $o = $orders[0];
+$o->{price} = $price;
+
+if($args->{F} || confirmOrder($o)) {
+    ($formData, $cookies) = checkout($o, $formData, $cookies, $ua);
+}
+
+
+###################### WEB REQUESTING FUNCTIONS ###############
+
+sub getLoginPage {
+    my ($ua, $nextURL) = @_;
+
+    pprint "Getting login page...\n", PPRINT_OUTPUT;
+
+    
+    my $req = nextReq("GET", FRONT_PAGE_URL, {}, "");
+
+    my $res = $ua->request($req);
+
+
+    printPage($res->content, "loginpage");
+
+    if ($res->is_success) {
+	pprint "LOGIN PAGE REQUEST SUCCESS\n", PPRINT_DEBUG;
+	
+	my $hid = parseHiddens($res->content);
+	my $cooks = mergeCookies($req, $res, $nextURL, {});
+
+	pprint "LOGIN PAGE RESPONSE HIDDENS: " . join(" ; ", map {"$_ : $hid->{$_}"} keys %$hid) . "\n", PPRINT_DEBUG;
+	pprint "LOGIN PAGE RESPONSE COOKIES: $cooks\n", PPRINT_DEBUG;
+
+
+	return ($hid, $cooks);
+
+    }
+    else {
+	pprint "LOGIN PAGE REQUEST FAILURE\n", PPRINT_DEBUG;
+	return ({}, "");
+    }
+
+}
+
+sub login {
+    my ($user, $pass, $hiddens, $cooks, $ua, $nextURL) = @_;
+
+    pprint "Logging in as $user...\n", PPRINT_OUTPUT;
+
+
+    my $data = {
+	B2 => "Let's Go",
+	UNAME => $user,
+	UPWORD => $pass,
+    };
+
+    my $req = nextReq("POST", LOGIN_URL, mergeHashes($hiddens,$data), $cooks);
+
+    my $res = $ua->request($req);
+
+    printPage($res->content, "loginresp");
+    
+    if ($res->is_success) {
+	pprint "LOGIN REQUEST SUCCESS\n", PPRINT_DEBUG;
+
+	if(storeClosed($res->content)) {
+	    pprint "\nSorry, but your dominos is currently unavailable for ordering over the internet.\n\n" , PPRINT_FATAL;
+	}
+	
+	my $hid = parseHiddens($res->content);
+	my $cooks = mergeCookies($req, $res, $nextURL, {});
+
+	pprint "LOGIN RESPONSE FORM VARIABLES: " . join(" ; ", map {"$_ : $hid->{$_}"} keys %$hid) . "\n", PPRINT_DEBUG;
+	pprint "LOGIN RESPONSE COOKIES: $cooks\n", PPRINT_DEBUG;
+	
+	return ($hid, $cooks);
+
+    }
+    else {
+	pprint "LOGIN REQUEST FAILURE\n", PPRINT_DEBUG;
+	
+	return ({},"");
+
+    }
+} 
+
+
+sub order {
+    my ($order, $nO, $final, $hiddens, $cooks, $ua, $nextURL) = @_;
+
+    pprint "Submitting order for " . orderStr($order) . " ...\n", PPRINT_OUTPUT;
+
+
+    my $data = {
+	"PQTY$nO" => $order->{qty},
+	"PTYP$nO" => pizzaSelect($order),
+    };
+
+    if($final) {
+	$data->{B3} = 'Checkout';
+    }
+    else {
+	$data->{B1} = 'Update Order';
+    }
+
+
+    for(my $i = 1; $i < $nO; $i++) {
+	$data->{"DELPI$i"} = "ON";
+    }
+
+#no toppings
+    for(my $i = 1; $i <= 16; $i++) {
+	$data->{"PINGI${nO}T$i"} = "01;"; 
+    }
+    
+#no side orders
+    for(my $i = 1; $i <= 30; $i++) {
+	$data->{"POTHI$i"} = "0"; 
+    }
+
+#just the toppings i want
+    foreach(@{$order->{toppings}}) {
+	$data->{"PINGI${nO}T" . $optHash->{$_}->{topping_id}} = "11;";
+    }
+    
+    my $req = nextReq("POST", ORDER_URL, mergeHashes($hiddens, $data), $cooks);
+
+    my $res = $ua->request($req);
+
+    printPage($res->content, "orderresp$nO");
+    
+    if ($res->is_success) {
+	pprint "ORDER REQUEST SUCCESS\n", PPRINT_DEBUG;
+	
+	my $hid = parseHiddens($res->content);
+	my $cooks = mergeCookies($req, $res, $nextURL, {});
+	
+	$_ = $res->content;
+	my (@prices) = /(\$[\d\.]+)/igs;
+
+	my $price = $prices[-1];
+
+	pprint "ORDER RESPONSE FORM VARIABLES: " . join(" ; ", map {"$_ : $hid->{$_}"} keys %$hid) . "\n", PPRINT_DEBUG;
+	pprint "ORDER RESPONSE COOKIES: $cooks\n", PPRINT_DEBUG;
+	
+	return ($hid, $cooks, $price);
+
+    }
+    else {
+	pprint "ORDER REQUEST FAILURE\n", PPRINT_DEBUG;
+	
+	return ({},"", 0);
+
+    }
+} 
+
+sub confirmOrder {
+    my $o = shift;
+    print "Confirmation: order for $o->{price} (y|yes|n|no)? ";
+
+    while(<STDIN>) {
+	chomp($_);
+	$_ = lc($_);
+	if($_ eq 'y' || $_ eq 'yes') {
+	    return 1;
+	}
+	elsif($_ eq 'n' || $_ eq 'no') {
+	    return 0;
+	}
+	print "Please type 'y' or 'yes' or 'n' or 'no': ";
+    }
+
+}
+
+
+
+sub checkout {
+    my ($order, $hiddens, $cooks, $ua, $nextURL) = @_;
+
+    pprint "Checking out for your order of $order->{price}...\n", PPRINT_OUTPUT;
+
+#TESTING!!    return ;
+
+    my $data = {
+	DELIVER => "Delivery",
+	PAY => "Cash",
+	PAOK => "ON",
+	B1 => 'Submit Order',
+    };
+
+    my $req = nextReq("POST", CHECKOUT_URL, mergeHashes($hiddens, $data), $cooks);
+
+    my $res = $ua->request($req);
+
+    printPage($res->content, "checkoutresp");
+    
+    if ($res->is_success) {
+	pprint "CHECKOUT REQUEST SUCCESS\n", PPRINT_DEBUG;
+	
+	$_ = $res->content;
+
+	my ($statLink) = /href\=\"([^\s\"]+qordstat[^\s\"]+)\"/is;
+	if(defined($statLink) && $statLink) {
+	    $statLink = "http://www.dominos.quikorder.com$statLink";
+	    pprint "Checkout successful!  To view the real-time status of your order, please go to:\n\t$statLink\n"
+		, PPRINT_OUTPUT;
+	}
+	
+    }
+    else {
+	pprint "CHECKOUT REQUEST FAILURE\n", PPRINT_DEBUG;
+	
+	return ({},"");
+
+    }
+} 
+
+
+sub storeClosed {
+    $_ = shift;
+
+    return /sorry.*store.*unavailable/is || /sorry.*not.*taking.*orders/is;
+
+}
+
+########################### OPTION/ORDER HANDLING ############################
+
+sub prepareOrder {
+    my $order = shift;
+
+    $order->{toppings} = getToppings($order, \@TOPLIST);
+    checkOrder($order);
+    
+    return $order;
+}
+    
+
+
+
+sub parseBatchFile {
+    my $fname = shift;
+
+    pprint "OPENING BATCH FILE: $fname\n", PPRINT_DEBUG;
+
+    (open BATCH, "< $fname") || pprint("Couldn't open batch file $fname for reading\n\n", PPRINT_FATAL);
+
+    my (@orders);
+
+    my $LINE = 0;
+
+    while(<BATCH>) {
+	$LINE++;
+
+	chomp($_);
+
+	if(/^\#/ || /^\s*$/) {
+	    next;
+	}
+
+	my (@lp) = split(/\s/);
+
+#	unshift(@lp, "");
+
+#	print "READ LINE: $_, parts: " . join(" ; ", @lp) . "\n";
+
+	my $order = getOrder(\@lp, \@DEFAULTS, $OPTIONS, sub { batcherr(@_, $LINE, $fname); });
+
+	push(@orders, prepareOrder($order));
+	
+    }   
+
+    if(scalar(@orders) < 1) {
+	pprint qq{Your batch file "$fname" does not contain any valid orders\n}, PPRINT_OUTPUT;
+    }
+
+    return (@orders);
+}
+
+
+sub readRCFile {
+    my $fname = shift;
+
+
+    my $rc = {};
+    if(! -e $fname) {
+	return $rc;
+    }
+
+    if(open INIFILE, "< $fname") {
+	my $ln = 0;
+	while(<INIFILE>) {
+	    $ln++;
+	    chomp($_);
+	    my $line = $_;
+
+	    next if($line =~ /^\s*\#/i || $line =~ /^\s*$/i);
+
+	    my ($k, $v) = split(/\=/, $line, 2);
+	    if(defined($k) && defined($v)) {
+		$k =~ s/^\s+//ig;
+		$v =~ s/^\s+//ig;
+		$k =~ s/\s+$//ig;
+		$v =~ s/\s+$//ig;
+
+		$k =~ s/^default\_//ig;
+
+		$rc->{lc($k)} = $v;
+	    }
+	    else {
+		pprint "Line $ln of your rc file is malformed: \"$line\"\n", PPRINT_OUTPUT;
+	    }
+	}
+
+	(!defined($rc->{quantity})) 
+	    || ($rc->{quantity} = parseQty($rc->{quantity})) 
+	    || pprint "'default_quantity' invalid in rc file: $PPERROR\n", PPRINT_OUTPUT;
+
+	(!defined($rc->{size}))
+	    || ($rc->{size} = parseSize($rc->{size})) 
+	    || pprint "'default_size' invalid in rc file: $PPERROR\n", PPRINT_OUTPUT;
+
+	(!defined($rc->{crust})) 
+	    || ($rc->{crust} = parseCrust($rc->{crust})) 
+	    || pprint "'default_crust' invalid in rc file: $PPERROR\n", PPRINT_OUTPUT;
+    }
+    else {
+	pprint "NO INI FILE FOUND\n", PPRINT_DEBUG;
+    }
+
+    return $rc;
+
+}
+
+
+
+sub setOutputLevel {
+    my $options = shift;
+
+    if($options->{quiet}) {
+	$PPRINT_LEVEL = PPRINT_QUIET;
+    }
+    elsif($options->{verbose}) {
+	$PPRINT_LEVEL = PPRINT_VERBOSE;
+    }
+}
+
+
+
+sub getAccountInfo {
+    my $options = shift;
+    my $rc = shift;
+
+    #read from file....
+    my $user = $rc->{username} || "";
+    my $pass = $rc->{password} || "";
+    
+    if(defined($options->{username}) && $options->{username}) {
+	$user = $options->{username};
+    }
+    if(defined($options->{password}) && $options->{password}) {
+	$pass = $options->{password};
+    }
+
+    if(!($user && $pass)) {
+#	pprint "You haven't entered a username and password\n", PPRINT_FATAL;
+	argError ("You haven't entered a username and password");
+    }
+
+    return ($user, $pass);
+
+}
+
+
+
+
+sub checkOrder {
+    my $o = shift;
+
+    if($o->{size} eq 's' && $o->{crust} eq 'd') {
+	pprint "You cannot order Small pizzas with a Deep Dish crust.\n", PPRINT_FATAL;
+
+    }
+
+}
+
+sub pizzaSelect {
+    my $o = shift;
+
+    my $s = $o->{size};
+    my $c = $o->{crust};
+
+    if($s eq 'l' || $s eq 'm') {
+	return join(" ", (ucfirst($SIZES->{$s}->{name}), ucfirst($CRUSTS->{$c}->{name}), ($c eq 'd' ? "Dish" : "Crust")));
+    }
+    else {
+	return  ucfirst($SIZES->{$s}->{name}) . " " . ($c eq 'r' ? "Reg Crust" : "Thin");
+    }
+
+}
+
+sub orderStr {
+    my $order = shift;
+    
+    return "$order->{qty} $SIZES->{$order->{size}}->{name} $CRUSTS->{$order->{crust}}->{name} pizza" 
+    . ($order->{qty} > 1 ? "s" : "")
+    . (scalar(@{$order->{toppings}}) > 0 ? " with " . join(", ", @{$order->{toppings}}) : "" ) 
+    . ($order->{comment} ? " ($order->{comment})" : "")
+    ;
+}
+
+sub markToppings {
+    my ($optHash, $toppings) = @_;
+
+    for(my $i = 0; $i < scalar(@$toppings); $i++) {
+	my $id = $i+1;
+	my $t = $toppings->[$i];
+	$optHash->{$t}->{topping_id} = $id;
+    }
+}
+
+sub hashifyOptions {
+    my $optHash = {};
+
+    map {$optHash->{$_->{long}} = $_; 
+	 $optHash->{$_->{short}} = $_; 
+        } @$OPTIONS;
+
+    return $optHash;
+}
+
+sub getToppings {
+    my ($order, $toppings) = @_;
+
+    my (@mytops) = map { (exists($order->{$_}) && $order->{$_} ? $_ : () ) } @$toppings;
+
+    return \@mytops;
+}
+
+
+
+sub getOrder {
+    my ($args, $DEFAULTS, $OPTIONS, $errfn) = @_;
+
+    my (@tempARGV) = (@ARGV);
+    (@ARGV) = @$args;
+
+    my $res = {};
+    map {$res->{$_->{long}} = $_->{default}; 
+	 $res->{$_->{short}} = $_->{default};
+     } @$OPTIONS;
+    
+
+    my $optStr = join(" ", map {"$_->{short}$_->{type}" . ($_->{long} ? " $_->{long}>$_->{short}" : "")} @$OPTIONS);
+    
+    Getopt::Mixed::init($optStr);
+    $Getopt::Mixed::badOption = $errfn;
+    while (my ($opt, $val, $pretty) = Getopt::Mixed::nextOption()) {	
+	$opt = $optHash->{$opt};
+	if($opt->{type} =~ /s/i) {
+	    $val = lc($val);
+	}
+	elsif(!$opt->{type}) {
+	    $val = 1;
+	}
+	$res->{$opt->{long}} = $val;
+	$res->{$opt->{short}} = $val;
+    }
+    
+    Getopt::Mixed::cleanup();
+
+    $res->{qty} = parseQty(shift(@ARGV) || $DEFAULTS->[0]) || argError($PPERROR);
+    $res->{size} = parseSize(shift(@ARGV) || $DEFAULTS->[1]) || argError($PPERROR);
+    $res->{crust} = parseCrust(shift(@ARGV) || $DEFAULTS->[2]) || argError($PPERROR);
+    
+    $res->{comment} = join(" ", @ARGV);
+
+
+    (@ARGV) = @tempARGV;
+
+    return $res;
+}
+
+sub parseQty {
+    my $q = shift;
+
+    if($q !~ /^\d+$/i) {
+	$PPERROR = "quantity '$q' must be a numeric integer";
+	return undef;
+    }
+    elsif(!($q >= MIN_QTY && $q <= MAX_QTY)) {
+	$PPERROR = "quantity $q must be between " . MIN_QTY . " and " . MAX_QTY . " pizzas";
+	return undef;
+    }
+
+    return $q;
+}
+
+sub parseSize {
+    my $s = shift;
+
+    my $os = $s;
+    $s = matchArg(lc($s), $SIZES);    
+    if(!defined($s)) {
+	$PPERROR = "size '$os' was invalid";
+	return undef;
+    }
+
+    return $s;
+}
+
+sub parseCrust {
+    my $c = shift;
+    my $oc = $c;
+    $c = matchArg(lc($c), $CRUSTS);
+    if(!defined($c)) {
+	$PPERROR = "crust '$oc' was invalid";
+	return undef;
+    }
+
+    return $c;
+}
+
+sub matchArg {
+    my ($a, $vals) = @_;
+
+    foreach my $k (keys %$vals) {
+	my $v = $vals->{$k};
+	foreach my $v2 (@{$v->{aliases}}) {
+
+	    if($a eq $v2) {
+		return $k;
+	    }
+	}
+    }
+
+    return undef;
+}
+
+sub printArg {
+    my ($name, $vals,) = @_;
+
+    while(my ($k, $v) = each(%$vals)) {
+	foreach my $v2 (@{$v->{aliases}}) {
+	    print "$name: $k, $v2\n";
+	}
+    }
+
+}
+
+
+sub asshole {
+    my ($pos, $arg) = @_;
+    argError("Argument $arg was invalid");
+}
+
+sub batcherr {
+    my ($pos, $arg, $line, $file) = @_;
+    argError("Error on line $line of batch file: argument $arg was invalid.");
+}
+
+
+
+sub argError {
+    my $s = shift;
+
+    print "$s\n";
+    printUsage();
+    pprint "Try `pizza_party --help' for more information.\n\n", PPRINT_FATAL;
+
+}
+
+sub printUsage() {
+    print "Usage: pizza_party [OPTIONS] [QUANTITY=1] [SIZE=large] [CRUST=regular]\n";
+}
+
+sub printHelp {
+    print MIN_QTY . " <= QUANTITY <= " . MAX_QTY . ".  Default is $DEFAULTS[0].\n";
+    print "SIZE can be: (small|s) or (medium|med|m) or (large|l).  Default is large.\n";
+    print "CRUST can be: (thin|t) or (regular|reg|r) or (deep|d).  Default is regular.\n";
+    print "Example: `pizza_party -pmx 2 medium regular` orders 2 medium regular crust pizzas\n          with pepperoni, mushrooms, and extra-cheese, right to your door!\n";
+    print "\n";
+    
+    map {print "[-$_->{short} " . ($_->{long} ? "| --$_->{long}" : "") . "] " . (strMult(17 - length($_->{long}), " ")) . "$_->{desc}\n"} @$OPTIONS;
+
+    print "\n";
+    print "See the man page for more details on accounts, confiuration files, and batch ordering.\n";
+
+}
+
+sub strMult {
+    my $n = shift;
+    my $s = shift;
+
+    my $r = '';
+    while($n-- > 0) {
+	$r .= $s;
+    }
+    return $r;
+}
+
+
+
+############ HELPER ############################
+
+sub pprint {
+    my ($s, $level) = @_;
+
+    if($level <= $PPRINT_LEVEL) {
+	print $s;
+	if($level == PPRINT_FATAL) {
+	    exit;
+	}
+    }
+}
+
+
+sub printPage {
+    my ($html, $name) = @_;
+
+    if($PPRINT_LEVEL < PPRINT_DEBUG) {
+	return;
+    }
+
+    my $fname = "$name.html";
+
+    open OUTFILE, "> pages/$fname" || die "couldn't open $fname for writing";
+    
+    print OUTFILE $html;
+
+    close OUTFILE;
+}
+
+
+############## WEB ORDERING HELPER #########################################################
+
+sub nextReq {
+    my ($type, $url, $data, $cooks) = @_;
+
+    my $req = HTTP::Request->new($type => $url);
+
+    set_post_data($req, $data);
+    set_cookie_data($req, $cooks);
+
+    return $req;
+}
+
+
+
+sub mergeHashes {
+    my $res;
+
+    foreach my $h (@_) {
+	map {$res->{$_} = $h->{$_}; } keys %$h;
+    }
+    return $res;
+}    
+
+sub mergeCookies {
+    my ($oldReq, $resp, $newReq, $extra) = @_;
+
+    my $cjar = new HTTP::Cookies(
+			      file => "",
+			      autosave => 0,
+			      hide_cookie2=> 1,
+			      ignore_discard => 1
+			      );
+
+
+    my $reqC = parseCookies($oldReq->header('Cookie') || "");
+
+    if(!ref($newReq)) {	
+	my $t = $newReq;
+	$newReq = new HTTP::Request();
+	$newReq->uri($t);
+    }
+
+
+    my $host = $newReq->uri()->host();
+    $host =~ s/^[^\.]*(\..*)$/$1/is;
+    my $port = $newReq->uri()->port();
+
+    while(my ($k, $v) = each(%$reqC)) {
+	$cjar->set_cookie(0, "$k", $v, "/", $host, $port, 0, 0, 10000, 0);
+    }
+
+    $cjar->extract_cookies($resp);
+
+    if(!defined($extra)) {
+	$extra = {};
+    }
+    elsif(!ref($extra)) {
+	$extra = parseCookies($extra);
+    }
+    
+    while(my ($k, $v) = each(%$extra)) {    
+	$cjar->set_cookie(0, $k, $v, "/", $host, $port, 0, 0, 10000, 0);
+    }
+
+    # if they just pass the uri, we need an HTTP::Request object
+    # for the cookie jar to work on.
+    if(!ref($newReq)) {	
+	my $t = $newReq;
+	$newReq = new HTTP::Request();
+	$newReq->uri($t);
+    }
+    $cjar->add_cookie_header($newReq);
+
+
+    return ($newReq->header('Cookie') || "");
+}
+
+
+sub parseCookies {
+    my $s = shift;
+    
+    if (ref($s) =~ /HASH/) {
+	return $s;
+    }
+    
+    my $r = {};
+    
+    $_ = $s;
+    
+    my (@pairs) = split(/\;/);
+    
+    foreach(@pairs) {
+	my ($k, $v) = split(/\=/);
+	$k =~ s/^\s*//igs;
+	$r->{$k} = $v;
+    }
+
+    return $r;
+   
+}
+
+sub parseHiddens {
+    $_ = shift;
+
+    my (@in) = m|<input[^>]+>|igs;
+
+    my $res = {};
+    
+    map {(lc(getAtt($_, "type")) eq 'hidden' ? $res->{getAtt($_, "name")} = getAtt($_, "value") : "");} @in;
+
+    return $res;
+}
+
+
+sub getAtt {
+    my ($html, $att) = @_;
+
+    my $var = '(?:\"[^\"]*\"|\'[^\']*\'|[^\'\"][^\s\>]*)';
+
+
+    $_ = $html;
+    my ($v) = /$att\=($var)/is;
+    $v =~ s/^[\'\"](.*)[\'\"]$/$1/is;
+
+    return $v;
+
+}
+
+
+
+sub set_post_data {
+    my ($self, $data) = @_;
+    
+    if (defined($data) && $data) {
+        my (@c, $content, $len);
+        
+	    if (ref($data) =~ /HASH/) {
+	        while (my($k, $v) = each(%$data)) {
+	    	    push(@c, "$k=" . uri_escape($v));
+	        }
+            
+            $content = join('&', @c);        
+	    } elsif (ref($data) =~ /ARRAY/) {
+            for (my $i = 0; $i < scalar(@$data); $i += 2) {
+                push(@c, "$data->[$i]=" . uri_escape($data->[$i + 1]));
+            }
+            
+            $content = join('&', @c);
+        } else {
+	        $content = $data;
+	    }
+        
+	    $len = length($content);
+
+	    if($len > 0) {
+	        $self->method('POST');
+	        $self->content($content);
+	        $self->content_type("application/x-www-form-urlencoded");
+	        $self->content_length($len);
+	    }
+    }
+}
+
+sub set_cookie_data {
+    my ($self, $data) = @_;
+
+    if(defined($data) && $data) {
+	$self->header('Cookie' => $data);
+    }
+
+}

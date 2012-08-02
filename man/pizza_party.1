@@ -1,0 +1,159 @@
+.TH pizza_party 1 "April 29th 2004" "Pizza Party" "BEIGE"
+.SH NAME
+pizza_party \- text-based client for ordering pizza.  
+
+.SH SYNOPSIS
+.B pizza_party
+.RB [ \-o | \-\-onions ]
+.RB [ \-g | \-\-green-peppers ]
+.RB [ \-m | \-\-mushrooms ]
+.RB [ \-v | \-\-olives ]
+.RB [ \-t | \-\-tomatoes ]
+.RB [ \-h | \-\-pineapple ]
+.RB [ \-x | \-\-extra-cheese ]
+.RB [ \-d | \-\-cheddar-cheese ]
+.RB [ \-p | \-\-pepperoni ]
+.RB [ \-s | \-\-sausage ]
+.RB [ \-w | \-\-ham ]
+.RB [ \-b | \-\-bacon ]
+.RB [ \-e | \-\-ground-beef ]
+.RB [ \-c | \-\-grilled-chicken ]
+.RB [ \-z | \-\-anchovies ]
+.RB [ \-u | \-\-extra-sauce ]
+.RB [ \-U| \-\-user=
+.IR username ]
+.RB [ \-P | \-\-password=
+.IR pasword ]
+.RB [ \-I | \-\-input\-file=
+.IR input-file ]
+.RB [ \-V | \-\-verbose ]
+.RB [ \-Q | \-\-quiet ]
+.RB [ \-F | \-\-force ]
+.RB [ QUANTITY ]
+.RB [ SIZE ]
+.RB [ CRUST ]
+
+.SH DESCRIPTION
+The 
+.B pizza_party
+program provides a text only command line interface for ordering DOMINOS pizza from the terminal.  This program is intended to aid in the throwing of 
+.IR PIZZA 
+.IR PARTIES
+which are also sometimes known as
+.IR ZA
+.IR PARTIES
+
+.SH USAGE
+.TP
+pizza_party -pmx 2 medium regular
+.TP
+Orders 2 medium regular crust pizzas with pepperoni, mushrooms, and extra-cheese.
+
+.SH DIRECTIONS
+You will first need to go to www.dominos.quikorder.com and sign up for an account.  Then use your user name and password in the .pizza_partyrc file, or in your command line request.    
+
+.SH OPTIONS
+.TP
+
+.BR \-o | \-\-onions
+Order your pizza with onions.
+.TP
+.BR \-m | \-\-mushrooms
+Order your pizza with mushrooms.
+.TP
+.BR \-v | \-\-olives
+Order your pizza with olives.  To remember this try to think that often olives go in [v]odka. 
+.TP
+.BR \-t | \-\-tomatoess
+Order your pizza with tomatoes.
+.TP
+.BR \-h | \-\-pineapple
+Order your pizza with pineapple.  To remember this try to think of [h]awaii
+.TP
+.BR \-x | \-\-extra-cheese
+Order your pizza with extra cheese.  To remember this try to think of [x]tra, a common misspelling of extra.
+.TP
+.BR \-d | \-\-cheddar-cheese
+Order your pizza with cheddar-cheese.  
+.TP
+.BR \-p | \-\-pepperoni
+Order your pizza with pepperoni.
+.TP
+.BR \-s | \-\-sausage
+Order your pizza with sausage.
+.TP
+.BR \-w | \-\-ham
+Order your pizza with ham.  To remember this try to think of the pig from chroltette's web named [w]ilber.  Or actually better yet, lets think of "House of Pains" second album title "Same as it ever [w]as".  fact: House of Pain started a pizza place in LA names HOUSE OF PIZZA.
+.TP
+.BR \-b | \-\-bacon
+Order your pizza with bacon.  
+.TP
+.BR \-e | \-\-ground-beef
+Order your pizza with ground-beef.  To remember this try to think of [e]coli bacteria.
+.TP
+.BR \-c | \-\-grilled-chicken
+Order your pizza with grilled chicken.  
+.TP
+.BR \-a | \-\-anchovies
+Order your pizza with anchovies.  
+.TP
+.BR \-u | \-\-extra-sauce
+Order your pizza with extra sauce.
+.TP
+\fB\-U\fP|\fP\-\-username=\fP\fIusername\fP
+Include your dominos username in the command line as opposed to using the ini file. 
+.TP
+\fB\-P\fP|\fP\-\-password=\fP\fIpassword\fP
+Include your dominos password in the command line as opposed to using the ini file. 
+.TP
+\fB\-I\fP|\fP\-\-input-file=\fP\fIinput-file\fP
+Read pizza orders from a batch file.  This batch file will be formatted the same way as your single command line pizza orders except each order will be separated by a UNIX new line.
+.TP
+.BR \-Q | \-\-quiet
+quiet.  
+.TP
+.BR \-F | \-\-force
+Order your pizza without asking for a confirmation.  
+.TP
+.BR \-H | \-\-help
+show the command options/arguments for pizza_party.  
+.TP
+.BR QUANTITY
+Quantity can be 1-9
+.TP
+.BR SIZE
+Size can be (small|s) or (medium|med|m) or (large|l).  Default is large.
+.TP
+.BR CRUST
+Crust can be (thin|t) or (regular|reg|r) or (deep|d).  Default is regular.
+
+.SH RC FILE: .pizza_partyrc
+.TP
+.pizza_partyrc
+.TP
+To be placed in your home directory, this file can contain all your default information.  A typical format would look like...
+.P
+username=rtm
+.RS 1
+.RE 1
+password=simple
+.RE 1
+default_quantity=3
+.RE 1
+default_size=medium
+.RE 1
+default_crust=deep
+.RE 1
+default_toppings=pmx
+
+.SH AUTHOR
+Ver 0.1 beta, distribution 00.00.04
+.RE 1
+Eyebeam.org & BEIGE Programming Ensemble commission / collaboration
+.RE 1
+Cory Arcangel (studio ATTTTT coryarcangel DOT com),
+.RE 1
+Michael Frumin (michael ATTTTT frumin DOT neeeeet).
+.RE 1
+This software comes with no warranty.
+.\" end of man page
