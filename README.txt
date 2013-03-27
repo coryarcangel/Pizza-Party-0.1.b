@@ -23,7 +23,7 @@ Installation
 As pizza_party is written for command-line junkies, so too are these installation instructions.
 
 1) presumably, you've already downloaded and extracted the .tar.gz file which contained this README.
-2) make sure you're got the following Perl modules (and all their dependecies) installed:
+2) make sure you've got the following Perl modules (and all their dependecies) installed:
 
       LWP::UserAgent;
       HTTP::Request;
